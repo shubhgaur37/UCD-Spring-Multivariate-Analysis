@@ -1,0 +1,581 @@
+---
+title: "Multivariate Analysis"
+subtitle: "Assignment 1"
+author: "Shubh Gaur - 23200555"
+format: 
+  html:
+   embed-resources: true
+  pdf: 
+    geometry:
+    - top=20mm
+    - left=15mm
+    - heightrounded
+execute: 
+  error: true
+---
+
+## Importing Libraries
+
+```{r}
+#| message: False
+#| output: False
+# packages to import
+packages <- c("tidyverse","reshape2","MASS","pls")
+
+# Install and load packages
+for (pkg in packages) {
+  if (!require(pkg, character.only = TRUE)) {
+    install.packages(pkg)
+    library(pkg, character.only = TRUE)
+  }
+}
+```
+
+## Loading the data
+
+```{r}
+data <- read_csv("Temperature_data.csv",show_col_types = FALSE)
+head(data,strict.width='cut')
+```
+
+```{r}
+summary(data,strict.width='cut')
+```
+
+Now, we will be sampling 1000 data points using random indexing from the original dataframe.
+
+```{r}
+set.seed(23200555)
+sample_size <- 1000
+sample_indices <- sample(nrow(data),size=sample_size)
+cat(paste(sample_indices[1:5]))
+cat(paste('\nLength of sample:',length(sample_indices)))
+```
+
+We have successfully sampled 1000 random indexes which we'll be using for the data in consideration. Lets create a dataframe using the sampled indexes.
+
+```{r}
+sample_data <- data[sample_indices,]
+head(sample_data)
+```
+
+Given that variable **aveOralM** contains the average of several oral temperature measurements and assumption is that it is the most accurate measure of temperature(°C).
+
+Lets check if this variable contains any **NA** values.
+
+```{r}
+any(is.na(sample_data$aveOralM))
+```
+
+As clear from the output this variable doesn't have any **NA** values.
+
+```{r}
+#| warning: false
+#| message: false
+# Select the variables except the last 4
+temperature_variables <- c("Max1R13_1", "T_RC1", "T_LC1", "RCC1", "canthiMax1", "T_FHCC1",
+                           "T_FHLC1", "T_FHTC1", "T_OR1", "aveAllR13_1","aveOralM")
+pairs(sample_data[,temperature_variables])
+```
+
+It is clear from the pairplot that there is high correlation among the variables in the dataset.
+
+We will now be plotting boxplots for each observation to check if there are outlying values.
+
+```{r}
+#| warning: false
+#| message: false
+# Melt the data for easier plotting
+melted_data <- melt(sample_data[, temperature_variables])
+
+# Plot boxplots for each variable
+ggplot(melted_data, aes(x = variable, y = value)) +
+  geom_boxplot() +
+  labs(x = "Variables", y = "Temperature(°C)") +
+  theme_linedraw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Some outlier values are present in all the variables and since very low values of temperature indicate measurement errors. We'll be removing all the datapoints where the oral temperature is below the mean by 4 standard deviations.
+
+```{r}
+#| warning: false
+#| message: false
+
+
+# Calculate mean and standard deviation for aveOralM
+mean_oral_temp <- mean(sample_data$aveOralM, na.rm = TRUE)
+sd_oral_temp <- sd(sample_data$aveOralM, na.rm = TRUE)
+
+# Determine lower threshold
+lower_threshold <- mean_oral_temp - 4 * sd_oral_temp
+
+# Filter out observations where Oral_Temp is more than 4 standard deviations below the mean
+filtered_data <- sample_data %>%
+  filter(aveOralM >= lower_threshold)
+
+# Melt the data for plotting
+melted_data <- melt(filtered_data[, temperature_variables])
+
+# Plot boxplots for each variable
+ggplot(melted_data, aes(x = variable, y = value)) +
+  geom_boxplot() +
+  labs(x = "Variables", y = "Temperature(°C)") +
+  theme_linedraw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+We have successfully removed measurement errors according to the given information.
+
+## Clustering
+
+### Dissimilarity matrix
+
+We will be constructing the dissimilarity matrix using Euclidean distance. The reason for choosing euclidean distance as the dissimilarity measure is we want to see how different any two subjects are in terms of temperature values and the Euclidean distance between two data points would represent the overall difference between their temperature measurements across all temperature variables.
+
+```{r}
+dist.max = dist(dplyr::select(filtered_data[,temperature_variables],-aveOralM), 
+                method="euclidean")
+```
+
+### Hierarchical Clustering
+
+Now, we will be plotting the cluster dendrogram using **complete** linkage because of its property of considering maximum dissimilarity between clusters. This linkage strategy can efficiently group patients with similar temperature patterns together, enabling the identification of distinct clusters representing different temperature profiles. 
+
+```{r}
+cl.complete = hclust(dist.max, method="complete")
+plot(cl.complete, xlab="Complete linkage", sub="")
+```
+Now, we will be cutting the dendrogram into two clusters. We are doing this because we want to see if subjects with elevated temperatures are clustered into a single unit and subjects whose temperature is not elevated are clustered together.
+
+```{r}
+#| warning: false
+# adding a column which represents cluster
+filtered_data$cluster_hierarchical <- cutree(cl.complete, k = 2)
+
+# Create a data frame for plotting
+plot_data <- filtered_data[,temperature_variables]
+plot_data$cluster_hierarchical <- factor(filtered_data$cluster_hierarchical)
+
+# Create scatter plots for each temperature variable
+for (temp_var in temperature_variables) {
+  if (temp_var!='aveOralM'){
+  # Create a scatter plot with points colored based on cluster
+  plot <- ggplot(plot_data, aes(x = aveOralM, y = .data[[temp_var]], 
+                                color = cluster_hierarchical)) +
+    geom_point() +
+    # Add vertical line at 37.8 degrees Celsius
+    geom_vline(xintercept = 37.8, linetype = "dashed", color = "black") + 
+    labs(title = paste("Scatter Plot of", temp_var, "vs aveOralM"),
+         x = "aveOralM", y = temp_var, color = "Cluster") +
+    theme_minimal()
+  
+  # Print the plot
+  print(plot)
+  }
+}
+```
+
+In summary, the selection of euclidean distance metric with complete linkage is a well-informed choice, driven by rigorous testing and tailored to the specific requirements of our problem domain. This combination offers robust cluster formations, preserves cluster heterogeneity, and optimizes the identification of temperature patterns associated with pyrexia, ultimately enhancing the effectiveness of our analysis.
+
+### K-means clustering
+Let us implement another approach to screen patients using clustering which is k means clustering.
+K- means algorithm requires a dataframe which doesn't have any na values. Therefore, before building our model we will omit all records if it has even a single na value. 
+```{r}
+filtered_data_na_removed <- na.omit(filtered_data)
+n=nrow(filtered_data_na_removed)
+WCSS = rep(0,10)
+WCSS[1] = (n-1) * sum(apply(dplyr::select(filtered_data_na_removed
+                                          [,temperature_variables],-aveOralM), 2, var))
+
+for(k in 2:10)
+{
+WCSS[k] = sum(kmeans( dplyr::select(filtered_data_na_removed
+                                  [,temperature_variables],-aveOralM), 
+                      centers = k)$withinss )
+}
+plot(1:10, WCSS, type="b", xlab="k", ylab="Within group sum of squares")
+```
+
+According to the plot of within the cluster sum of squares for different number of clusters, we see a near stagnant error after $k = 3$. Therefore,we select $k = 3$ as the optimal number of clusters.
+
+```{r}
+# Perform K-means clustering
+kmeans_result <- kmeans(dplyr::select(filtered_data_na_removed
+                                      [, temperature_variables], -aveOralM),
+                        centers = 3)
+
+# Adding a column which represents cluster
+filtered_data_na_removed$cluster_kmeans <- kmeans_result$cluster
+
+# Create a data frame for plotting
+plot_data <-
+  filtered_data_na_removed[, c(temperature_variables, "cluster_kmeans")]
+
+# Create scatter plots for each temperature variable
+for (temp_var in temperature_variables) {
+  if (temp_var != 'aveOralM') {
+    # Create a scatter plot with points colored based on cluster
+    plot <-
+      ggplot(plot_data, aes(x = aveOralM,y = .data[[temp_var]],
+                            color = factor(cluster_kmeans))) +
+      geom_point() +
+      # Add vertical line at 37.8 degrees celsius
+      geom_vline(xintercept = 37.8,linetype = "dashed",color = "black") +  
+    labs(title = paste("Scatter Plot of", temp_var, "vs aveOralM"),
+         x = "aveOralM",y = temp_var,color = "Cluster") +theme_minimal()
+    # Print the plot
+    print(plot)
+  }
+}
+```
+
+Let us now perform k means clustering with 2 clusters as according to our problem we need to screen subjects for elevated temperatures. So either their temperature can be elevated or it can be normal. So number of groups = 2. 
+
+```{r}
+# Perform K-means clustering
+kmeans_result <- kmeans(dplyr::select(filtered_data_na_removed
+                                      [, temperature_variables], -aveOralM), 
+                        centers = 2)
+
+# Adding a column which represents cluster
+filtered_data_na_removed$cluster_kmeans <- kmeans_result$cluster
+
+# Create a data frame for plotting
+plot_data <- filtered_data_na_removed[, c(temperature_variables, "cluster_kmeans")]
+
+# Create scatter plots for each temperature variable
+for (temp_var in temperature_variables) {
+    if (temp_var!='aveOralM'){
+      # Create a scatter plot with points colored based on cluster
+      plot <- ggplot(plot_data, aes(x = aveOralM, y = .data[[temp_var]], 
+                                    color = factor(cluster_kmeans))) +
+      geom_point() +
+      # Add vertical line at 37.8 degrees Celsius
+      geom_vline(xintercept = 37.8, linetype = "dashed", color = "black") +  
+      labs(title = paste("Scatter Plot of", temp_var, "vs aveOralM"),
+         x = "aveOralM", y = temp_var, color = "Cluster") +
+      theme_minimal()
+  
+      # Print the plot
+      print(plot)
+    }
+}
+```
+
+After reviewing the clustering patterns found using the two approaches used we find **k-means** with $k = 2$ as a better solution for finding subjects with elevated temperatures because it has lesser overlap as compared to the hierarchical clustering solution.
+
+## Discriminant Analysis
+
+### Linear Discriminant Analysis
+
+We will try to classify subjects based on gender utilising the facial temperature data with the help of **LDA**. Lets create a new dataframe using the existing filtered dataframe with facial temperature variables and gender. 
+Note: We need to scale the dataframe also as its a necessity for **LDA** that each predictor has same variance.
+
+```{r}
+# Considering only facial temperature variables, all variables
+# starting from aveOralM are excluded
+facial_temp_data <- filtered_data_na_removed %>%
+  dplyr::select(-aveOralM:-cluster_kmeans) %>%
+  scale() %>%
+  as.data.frame()
+
+#adding gender column and converting it to categorical
+facial_temp_data$Gender <- factor(filtered_data_na_removed$Gender)
+colnames(facial_temp_data)
+```
+
+The dataframe is successfully created with the required columns.
+
+We have all the required data, now we can fit the model.
+
+```{r}
+lda.res <- lda(Gender ~ ., data=facial_temp_data)
+lda.res
+```
+
+Lets check the posterior probability of belonging to each class for first six observations.
+
+```{r}
+predictions <- predict(lda.res)
+head(predictions$posterior)
+```
+
+```{r}
+#find accuracy of model
+mean(predictions$class==facial_temp_data$Gender)
+```
+
+Our model has an accuracy of **88.7 %**.
+
+Let us perform LDA with cross validation on the data as we want to assess the misclassification rate to a better extent so we need an accurate measure.
+
+```{r}
+lda.res.cv <- lda(Gender ~ ., CV=TRUE, data=facial_temp_data)
+conf_mat <- table(lda.res.cv$class, facial_temp_data$Gender)
+conf_mat
+```
+
+Lets check the misclassification rate.
+
+```{r}
+mc_rate <- 1-sum(diag(conf_mat))/sum(conf_mat)
+mc_rate
+```
+
+Our LDA classifier misclassified **11.46 %** of the genders in the dataset.
+
+#### Pending: Decision Boundary
+
+```{r}
+coefficients <- coef(lda.res)
+
+# Calculate LD1 values
+ld1_values <- as.matrix(dplyr::select(facial_temp_data, -Gender)) %*% coefficients
+
+# Combine LD1 values with group information
+ld1_data <- data.frame(LD1 = ld1_values, Gender = facial_temp_data$Gender)
+
+# Calculate mean LD1 values for each gender group
+mean_ld1_female <- mean(subset(ld1_data, Gender == "Female")$LD1)
+mean_ld1_male <- mean(subset(ld1_data, Gender == "Male")$LD1)
+
+ggplot(ld1_data, aes(x = LD1, color = Gender)) +
+  geom_density() +  
+  geom_vline(xintercept = mean_ld1_female, color = "blue", linetype = "dashed") +
+  geom_vline(xintercept = mean_ld1_male, color = "red", linetype = "dashed") +
+  labs(x = "LD1", y = "Density", title = "Linear decision boundary plots for group gender")  +
+  theme_minimal() +
+  scale_color_manual(values = c("blue", "red")) +
+  theme(legend.position = "top")
+
+```
+There is some overlap between the two gender groups as can be seen in the above plot. However, their distributions are quite different from each other which indicates there are two cluster formations(or two groups).
+
+### Quadratic Discriminant Analysis
+
+We will now fit a QDA model on the same data.
+
+```{r}
+qda.res <- qda(Gender ~ ., data=facial_temp_data)
+qda.res
+```
+
+Lets check the posterior probability of belonging to each class for first six observations.
+
+```{r}
+predictions <- predict(qda.res)
+head(predictions$posterior)
+```
+
+```{r}
+#find accuracy of model
+mean(predictions$class==facial_temp_data$Gender)
+```
+
+Our model has an accuracy of 88%.
+
+Let us perform QDA with cross validation on the data as we want to assess the misclassification rate to a better extent so we need an accurate measure.
+```{r}
+qda.res.cv <- qda(Gender ~ ., CV=TRUE, data=facial_temp_data)
+conf_mat <- table(qda.res.cv$class, facial_temp_data$Gender)
+conf_mat
+```
+
+Lets check the misclassification rate.
+```{r}
+mc_rate <- 1-sum(diag(conf_mat))/sum(conf_mat)
+mc_rate
+```
+
+Our QDA classifier misclassified **12.86 %** of the genders in the dataset.
+
+Its clear from the performance metrics of both the models that **LDA** model outperforms **QDA** model in terms of accuracy and misclassification rate
+
+**Comment**
+
+## Principal Component Analysis
+
+We will now reduce the dimensionality of the data using a well known technique known as **PCA**. 
+
+```{r}
+pca <- prcomp(facial_temp_data |> dplyr::select(-Gender))
+summary(pca)
+```
+
+```{r}
+# compute cumulative proportion of variance
+prop <- cumsum(pca$sdev^2) / sum(pca$sdev^2) 
+plot(1:length(prop), prop, type = "b",
+     xlab = "Number of Principal Components", 
+     ylab = "Cumulative Proportion of Variance Explained",
+     main = "Cumulative Proportion of Variance Explained by Principal Components")
+```
+
+From the PCA summary and the above plot its clear that the first principle component is able to explain much of the variance in the data. However, as the number of principal components included increases to **2** we are able to explain around **88**% variation in data which is good enough.
+
+Lets now derive the principal component score for each subject in the data using first principles.
+
+```{r}
+cov_matrix <- cov(facial_temp_data |> dplyr::select(-Gender))
+
+eigen <- eigen(cov_matrix)
+
+sorted_indices <- order(eigen$values, decreasing = TRUE)
+
+sorted_eigenvectors <- eigen$vectors[, sorted_indices]
+
+pc_scores <-
+  as.matrix(facial_temp_data |> dplyr::select(-Gender)) %*% sorted_eigenvectors
+
+# Combine principal component scores into a single data frame
+combined_scores <- data.frame(
+  PC1_first_principles = pc_scores[, 1],
+  PC2_first_principles = pc_scores[, 2],
+  PC1_prcomp = pca$x[, 1],
+  PC2_prcomp = pca$x[, 2]
+)
+
+# Plot combined principal component scores with legends for points
+ggplot(combined_scores,
+       aes(x = PC1_first_principles, y = PC2_first_principles)) +
+  geom_point(aes(color = "First Principles"),shape = 16,alpha = 0.2) +
+  geom_point(aes(x = PC1_prcomp, y = PC2_prcomp, color = "prcomp"),shape = 16,alpha = 0.3
+  ) +
+  labs(x = "Principal Component 1", y = "Principal Component 2", 
+       title = "Superimposed Principal Component Scores") +
+  scale_color_manual(values = c("First Principles" = "blue", "prcomp" = "red"),
+    labels = c("First Principles", "prcomp")) +
+  # Set legend marker shapes
+  guides(color = guide_legend(override.aes = list(shape = c(16, 17)))) +
+  theme_minimal()
+
+```
+
+It is clear from the above superimposed scatter plot of derived principal components using the first principles with principal components found using prcomp function that our computation for principal components is accurate.
+
+Furthermore, we can see that the selected principal components do not show any sort of correlating pattern like we had seen earlier in the pairplot. Therefore, Reducing the dimensionality space enabled us to mitigate the high collinearity which was present in the data.
+
+## Principal Component Regression
+
+### Introduction
+
+**Principal Components Regression (PCR)** as the name suggests is a technique that uses the same strategy as linear regression but with principal components. In this technique the principal components generated are used to model the **response** variable.
+
+### Purpose
+
+This technique is widely used with data having high multicollinearity between predictor variables and its primary motive is to improve the stability and accuracy of regression model by reducing the dimensionality of the predictor space. It is considered a **regularising** regression strategy for highly multicollinear data.
+
+### Methodology
+
+There are a sequence of steps which are essential when building PCR regression models which are listed below:
+
+1.  Generate principle components from predictor variables to represent data.
+
+2.  Select an appropriate value **k** i.e. the number of principal components to select. **k** can be determined using methods such as cross validation, information criteria(AIC,BIC) or based on cumulative proportion of variance explained by the k selected principal components.
+
+3.  Once the appropriate number principal components are selected, a regression model is fitted using the k selected principal components against the response variable. Generally, multiple regression models are fitted with varying number of principal components and along with cross validation to determine the best **k**.
+
+### Choices in PCR
+
+We need to make several choices to implement PCR which are listed below:
+
+1.  **Scaling of predictors** : when predictor variables have different scales we need to standardize them to ensure that the principal components are not biased i.e different scales aren't influencing the principal components.
+
+2.  **Number of principal components (k)** : The choice of k decides the dimensionality of predictor space after **PCA**.As discussed above it can be determined using techniques like cross validation, information criteria(AIC/BIC), or a predefined number based on domain knowledge
+
+3.  **Evaluation of model** : Model's performance can be assessed after determining the appropriate number of principal components to select using techniques like cross validation/information criteria which is already covered in the previous point.
+
+### Advantages
+
+1.  **Multicollinearity alleviation** : Predictor variables are transformed to principal components to address multicollinearity issues which improves the stability of regression models.
+
+2.  **Dimensionality Reduction** : Since **PCA** is used, the dimensionality of the predictor space is reduced which leads to simpler models and enhanced computaional efficiency.
+
+3.  **Overfitting Reduction** :Traditional regression models with highly correlated predictors are prone to overfitting because the model might capture noise in the data instead of the true underlying pattern.By reducing the predictor space, multicollinearity is reduced and consequently risk of overfitting is also reduced.
+
+### Disadvantages
+
+1.  **Loss of interpretability** : Since the predictors are transformed with the help of **PCA**, understanding the relationship between original predictor variables and response becomes challenging due to the transformation of predictor variables which makes it harder to explain the practical implications of the findings of the model.
+
+2.  **Sensitive to outliers** : Outliers may bias the construction of principal components, skewing the representation of predictor space which can further lead to distortions in model's performance and compromise the reliability of the model.
+
+3.  **Computational Complexity** : When there are large number of predictors, the computation of principal components becomes a highly intensive task which can pose challenges in terms of processing time and resource requirements particularly in real-time or resource constrained situations.
+
+4.  **Linearity Assumption** : PCR assumes a linear relationship between predictors and response variables. If non-linear interactions are present then this technique may not capture the relationships properly and may yield suboptimal predictions.
+
+## PCR Implementation
+
+We will now fit a PCR model on the facial temperature data to predict the oral temperature. Before doing that lets prepare appropriate training and testing sets for the same. We will be using a 70:30 train-test split.
+
+```{r}
+pcr_data <- filtered_data_na_removed |> dplyr::select(all_of(temperature_variables)) |>
+            scale() |> as.data.frame()
+
+# Number of observations
+n_obs <- nrow(pcr_data)
+
+train_size <- floor(n_obs * 0.7)   # 70% for training
+test_size <- floor(n_obs * 0.3)  # 30% for testing
+
+#setting the seed for reproducibility
+set.seed(23200555)
+
+# Creating indices for train and test sets
+train_indices <- sample(1:n_obs, train_size)
+test_indices <- sample(setdiff(1:n_obs, train_indices), test_size)
+```
+
+Now, lets fit the PCR model on training data.
+
+```{r}
+# Perform Principal Component Regression (PCR)
+pcr_model <- pcr(aveOralM ~ ., data = pcr_data[train_indices,], scale = FALSE, 
+                 validation = "CV")
+summary(pcr_model)
+```
+
+We will now use a validation plot to select the optimum number of principal components.
+
+```{r}
+validationplot(pcr_model)
+```
+
+Its clear from the above plot that RMSE is not decreasing much after 2 principal components. Let us also visualize the predictive performance based on the $R^2$ value.
+
+```{r}
+validationplot(pcr_model,val.type = "R2")
+```
+
+We can see here as well that there is not much increase in predictive performance after 2nd principal component. Therefore the optimum number of principal components which can be used is **2**. We will now make predictions on test data and see the performance metrics for the model.
+
+```{r}
+# Predictions on the test set
+predictions_test <- predict(pcr_model, newdata = pcr_data[test_indices,])
+
+# Actual values from the test set
+actual_values_test <- pcr_data$aveOralM[test_indices]
+
+predictions_2comps <- predictions_test[, , 2]
+
+# Calculate evaluation metrics for 2 components
+rmse_2comp <- sqrt(mean((predictions_2comps - actual_values_test)^2))
+mae_2comp <- mean(abs(predictions_2comps - actual_values_test))
+
+# Calculate total sum of squares
+mean_actual_values <- mean(actual_values_test)
+SS_tot <- sum((actual_values_test - mean_actual_values)^2)
+residuals_2comp <- actual_values_test - predictions_2comps
+
+# Calculate R-squared for 2 components
+SS_res_2comp <- sum(residuals_2comp^2)
+r_squared_2comp <- 1 - (SS_res_2comp / SS_tot)
+  
+  
+cat("Evaluation Metrics for 2 Components:\n")
+cat("RMSE:", round(rmse_2comp, 4), "\n")
+cat("MAE:", round(mae_2comp, 4), "\n")
+cat("R-squared:", round(r_squared_2comp, 4), "\n")
+```
+
+The $R^2$ value for model with 2 principal components on the testing set is around **0.74** which is in agreement with the training set as clear from the plots above. Therefore, the two principal components are able to explain around 74% variation in the **aveOralM** in the test set which can also be validated by looking at the plots and pcr model summary (TRAINING: % variance explained section).
